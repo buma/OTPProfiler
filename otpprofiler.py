@@ -69,7 +69,7 @@ def get_params(fast):
 
     return ret
 
-def getServerInfo(host):
+def getServerInfo(host, support_011=False):
     """Get information about the server that is being profiled. Returns a tuple of:
     (sha1, version, cpuName, nCores)
     where sha1 is the hash of the HEAD commit, version is the output of 'git describe' (which 
@@ -77,7 +77,11 @@ def getServerInfo(host):
     cpuName is the model of the cpu as reported by /proc/cpuinfo via the OTP serverinfo API,
     and nCores is the number of (logical) cores reported by that same API, including hyperthreading. 
     """
-    url_meta = "http://"+host+"/otp/"
+    if support_011:
+        url_meta = "http://"+host+"/otp-rest-servlet/ws/serverinfo"
+    else:
+        #master version
+        url_meta = "http://"+host+"/otp/"
 
     try :
         print "grabbing metadata from %s"%url_meta
@@ -143,14 +147,16 @@ def run(connect_args) :
     retry = connect_args.pop('retry')
     fast  = connect_args.pop('fast')
 
+    support_011 = connect_args.pop('eleven')
+
     host = connect_args.pop('host')
 
 #    info = ("0xABCD", "0.7.13-S", "blah", 8)
-    info = getServerInfo(host)
+    info = getServerInfo(host, support_011)
     while retry > 0 and info == None:
         print "Failed to connect to OTP server. Waiting to retry (%d)." % retry
         time.sleep(5)
-        info = getServerInfo(host)
+        info = getServerInfo(host, support_011)
         retry -= 1
         
     if info == None :
@@ -179,6 +185,11 @@ def run(connect_args) :
     t0 = time.time()
     response_json = []
     full_itins_json = []
+    if support_011:
+        url_template = "http://{}/otp-rest-servlet/ws/plan?".format(host)
+    else:
+        # Tomcat server + spaces in URLs -> HTTP 505 confusion
+        url_template = "http://{}/otp/routers/default/plan?".format(host)
     for params in all_params : # fetchall takes time and mem, use a server-side named cursor
         n += 1
         t = (time.time() - t0) / 60.0
@@ -195,8 +206,7 @@ def run(connect_args) :
         #if oid == tid :
         #    continue
         params['date'] = DATE
-        # Tomcat server + spaces in URLs -> HTTP 505 confusion
-        url = "http://"+host+"/otp/routers/default/plan?" + urllib.urlencode(params)
+        url = url_template + urllib.urlencode(params)
         if SHOW_PARAMS :
             print params
         if SHOW_URL :
@@ -221,7 +231,10 @@ def run(connect_args) :
                 print n_itin, 'itineraries'
                 # check response for timeout flag
                 status = 'complete'
-                path_times = objs['debugOutput']['pathTimes']
+                if support_011:
+                    path_times = objs['debug']['pathTimes']
+                else:
+                    path_times = objs['debugOutput']['pathTimes']
                 print path_times
                 # status = 'timed out'
             else:
@@ -271,6 +284,8 @@ if __name__=="__main__":
     parser.add_argument('host') 
     parser.add_argument('-f', '--fast', action='store_true', default=False) 
     parser.add_argument('-n', '--notes') 
+    parser.add_argument('-e', '--eleven', action='store_true', default=False,
+            help="creates requests for OTP  0.11")
     parser.add_argument('-r', '--retry', type=int, default=3) 
     args = parser.parse_args() 
 
